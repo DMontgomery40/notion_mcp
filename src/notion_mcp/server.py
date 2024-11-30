@@ -190,6 +190,29 @@ async def complete_todo(page_id: str) -> dict:
         
         return result
 
+async def create_task_relationship(task_id: str, related_task_id: str, relationship_type: str) -> None:
+    """Create a relationship between two tasks."""
+    if task_id == related_task_id:
+        raise ValueError("Cannot create a relationship between a task and itself")
+        
+    valid_relationships = ["blocks", "related_to", "parent_of", "followed_by"]
+    if relationship_type not in valid_relationships:
+        raise ValueError(f"Invalid relationship type. Must be one of: {valid_relationships}")
+    
+    # Add relationship to memory graph
+    memory_graph.add_relation(task_id, relationship_type, related_task_id)
+    
+    # Add observations to both tasks
+    memory_graph.add_observation(task_id, f"{relationship_type} {related_task_id}")
+    if relationship_type == "blocks":
+        memory_graph.add_observation(related_task_id, f"blocked_by {task_id}")
+    elif relationship_type == "parent_of":
+        memory_graph.add_observation(related_task_id, f"child_of {task_id}")
+    elif relationship_type == "followed_by":
+        memory_graph.add_observation(related_task_id, f"follows {task_id}")
+    else:
+        memory_graph.add_observation(related_task_id, f"related_to {task_id}")
+
 @server.list_tools()
 async def list_tools() -> list[Tool]:
     """List available tools"""
@@ -248,6 +271,57 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="show_memory",
             description="Show the current state of the memory graph",
+            inputSchema={
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        ),
+        Tool(
+            name="link_tasks",
+            description="Create a relationship between two tasks",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "task_id": {
+                        "type": "string",
+                        "description": "The ID of the first task"
+                    },
+                    "related_task_id": {
+                        "type": "string",
+                        "description": "The ID of the second task"
+                    },
+                    "relationship_type": {
+                        "type": "string",
+                        "description": "Type of relationship between tasks",
+                        "enum": ["blocks", "related_to", "parent_of", "followed_by"]
+                    }
+                },
+                "required": ["task_id", "related_task_id", "relationship_type"]
+            }
+        ),
+        Tool(
+            name="show_task_network",
+            description="Show all tasks related to a given task",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "task_id": {
+                        "type": "string",
+                        "description": "The ID of the task to show relationships for"
+                    },
+                    "depth": {
+                        "type": "integer",
+                        "description": "How many levels of relationships to show (default: 1)",
+                        "default": 1
+                    }
+                },
+                "required": ["task_id"]
+            }
+        ),
+        Tool(
+            name="get_blocked_tasks",
+            description="Show all tasks that are blocked by other uncompleted tasks",
             inputSchema={
                 "type": "object",
                 "properties": {},
@@ -366,6 +440,105 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent | Embedde
             TextContent(
                 type="text",
                 text=memory_graph.to_json()
+            )
+        ]
+    
+    elif name == "link_tasks":
+        task_id = arguments.get("task_id")
+        related_task_id = arguments.get("related_task_id")
+        relationship_type = arguments.get("relationship_type")
+        
+        if not all([task_id, related_task_id, relationship_type]):
+            raise ValueError("Missing required arguments")
+            
+        try:
+            await create_task_relationship(task_id, related_task_id, relationship_type)
+            return [
+                TextContent(
+                    type="text",
+                    text=f"Created {relationship_type} relationship between tasks {task_id} and {related_task_id}"
+                )
+            ]
+        except ValueError as e:
+            return [
+                TextContent(
+                    type="text",
+                    text=f"Error creating relationship: {str(e)}"
+                )
+            ]
+    
+    elif name == "show_task_network":
+        task_id = arguments.get("task_id")
+        depth = arguments.get("depth", 1)
+        
+        if not task_id:
+            raise ValueError("Task ID is required")
+            
+        def get_network_recursive(current_id: str, current_depth: int, visited: set) -> dict:
+            if current_depth > depth or current_id in visited:
+                return {}
+                
+            visited.add(current_id)
+            entity = memory_graph.get_entity(current_id)
+            if not entity:
+                return {}
+                
+            related = memory_graph.get_related_entities(current_id)
+            network = {
+                "task": entity,
+                "relationships": []
+            }
+            
+            for rel in related:
+                rel_id = rel["entity"]["name"] if "name" in rel["entity"] else None
+                if rel_id and rel_id not in visited:
+                    network["relationships"].append({
+                        "type": rel["relation"],
+                        "direction": rel["direction"],
+                        "related_task": get_network_recursive(rel_id, current_depth + 1, visited)
+                    })
+            
+            return network
+            
+        network = get_network_recursive(task_id, 0, set())
+        return [
+            TextContent(
+                type="text",
+                text=json.dumps(network, indent=2)
+            )
+        ]
+    
+    elif name == "get_blocked_tasks":
+        blocked_tasks = []
+        todos = await fetch_todos()
+        
+        # Create a mapping of task IDs to their completion status
+        task_status = {
+            todo["id"]: todo["properties"]["Checkbox"]["checkbox"]
+            for todo in todos.get("results", [])
+        }
+        
+        # Find all blocking relationships
+        for todo in todos.get("results", []):
+            task_id = todo["id"]
+            related = memory_graph.get_related_entities(task_id)
+            
+            for rel in related:
+                if rel["relation"] == "blocks" and rel["direction"] == "outgoing":
+                    blocker_id = task_id
+                    blocked_id = rel["entity"]["name"] if "name" in rel["entity"] else None
+                    
+                    if blocked_id and not task_status.get(blocker_id, True):
+                        blocked_tasks.append({
+                            "blocked_task": blocked_id,
+                            "blocked_by": blocker_id,
+                            "blocker_status": "incomplete"
+                        })
+        
+        return [
+            TextContent(
+                type="text",
+                text=json.dumps(blocked_tasks, indent=2)
             )
         ]
     
