@@ -93,6 +93,24 @@ async def create_todo(task: str, when: str) -> dict:
         response.raise_for_status()
         return response.json()
 
+async def complete_todo(page_id: str) -> dict:
+    """Mark a todo as complete in Notion"""
+    async with httpx.AsyncClient() as client:
+        response = await client.patch(
+            f"{NOTION_BASE_URL}/pages/{page_id}",
+            headers=headers,
+            json={
+                "properties": {
+                    "Checkbox": {
+                        "type": "checkbox",
+                        "checkbox": True
+                    }
+                }
+            }
+        )
+        response.raise_for_status()
+        return response.json()
+
 @server.list_tools()
 async def list_tools() -> list[Tool]:
     """List available todo tools"""
@@ -132,6 +150,20 @@ async def list_tools() -> list[Tool]:
                 "type": "object",
                 "properties": {},
                 "required": []
+            }
+        ),
+        Tool(
+            name="complete_todo",
+            description="Mark a todo item as complete",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "task_id": {
+                        "type": "string",
+                        "description": "The ID of the todo task to mark as complete"
+                    }
+                },
+                "required": ["task_id"]
             }
         )
     ]
@@ -175,6 +207,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent | Embedde
             for todo in todos.get("results", []):
                 props = todo["properties"]
                 formatted_todo = {
+                    "id": todo["id"],  # Include the page ID in the response
                     "task": props["Task"]["title"][0]["text"]["content"] if props["Task"]["title"] else "",
                     "completed": props["Checkbox"]["checkbox"],
                     "when": props["When"]["select"]["name"] if props["When"]["select"] else "unknown",
@@ -198,6 +231,31 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent | Embedde
                 TextContent(
                     type="text",
                     text=f"Error fetching todos: {str(e)}\nPlease make sure your Notion integration is properly set up and has access to the database."
+                )
+            ]
+    
+    elif name == "complete_todo":
+        if not isinstance(arguments, dict):
+            raise ValueError("Invalid arguments")
+            
+        task_id = arguments.get("task_id")
+        if not task_id:
+            raise ValueError("Task ID is required")
+            
+        try:
+            result = await complete_todo(task_id)
+            return [
+                TextContent(
+                    type="text",
+                    text=f"Marked todo as complete (ID: {task_id})"
+                )
+            ]
+        except httpx.HTTPError as e:
+            logger.error(f"Notion API error: {str(e)}")
+            return [
+                TextContent(
+                    type="text",
+                    text=f"Error completing todo: {str(e)}\nPlease make sure your Notion integration is properly set up and has access to the database."
                 )
             ]
     
