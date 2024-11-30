@@ -1,14 +1,12 @@
-# Notion MCP Integration
-
-A simple Model Context Protocol (MCP) server that integrates with Notion's API to manage my personal todo list through Claude. This is a basic implementation tailored specifically for my minimalist todo list setup in Notion.
+# Notion MCP Integration with Memory Graph
+A fork of [danhilse/notion_mcp](https://github.com/danhilse/notion_mcp) that adds memory graph functionality for enhanced task tracking and relationship management. The original project integrates with Notion's API to manage todo lists through Claude using the Model Context Protocol (MCP).
 
 <p align="center">
   <img src="assets/demo.gif" width="600"/>
 </p>
 
 ## Important Note
-
-This is a personal project designed for a very specific use case: my simple Notion todo list that has just three properties:
+This project extends the original notion_mcp with a memory graph system while maintaining compatibility with its minimalist todo list setup in Notion that has three properties:
 - Task (title)
 - When (select with only two options: "today" or "later")
 - Checkbox (marks if completed)
@@ -17,25 +15,35 @@ This is a personal project designed for a very specific use case: my simple Noti
 
 While you can use this as a starting point for your own Notion integration, you'll likely need to modify the code to match your specific database structure and requirements.
 
-## Features
+## New Features Added in this Fork
+- **Memory Graph System**: Tracks task history and relationships
+- **Enhanced Task History**: Records complete lifecycle of todos
+- **Task Relationships**: Ability to track relationships between tasks
+- **History Retrieval**: Get complete history of any task
+- **Memory Visualization**: View the entire memory graph state
 
+## Original Features
 - Add new todo items
 - View all todos
 - View today's tasks
 
-## Prerequisites
+## Extended Tool Commands
+All original commands plus:
+- `show_memory`: Display current memory graph state
+- `get_task_history`: Get complete history of a specific task
+- Memory-enhanced versions of original commands that track task lifecycle
 
+## Prerequisites
 - Python 3.10 or higher
 - A Notion account
 - A Notion integration (API key)
 - A Notion database that matches the exact structure described above (or willingness to modify the code for your structure)
 
 ## Setup
-
 1. Clone the repository:
 ```bash
-git clone https://github.com/yourusername/notion-mcp.git
-cd notion-mcp
+git clone https://github.com/DMontgomery40/notion_mcp.git -b feature/memory-integration
+cd notion_mcp
 ```
 
 2. Set up Python environment:
@@ -75,9 +83,7 @@ NOTION_DATABASE_ID=your-database-id-here
 ```
 
 ## Running the Server
-
 The server can be run in two ways:
-
 1. Directly from the command line:
 ```bash
 # From the project directory with virtual environment activated
@@ -92,28 +98,40 @@ python -m notion_mcp
 Note: When running directly, the server won't show any output unless there's an error - this is normal as it's waiting for MCP commands.
 
 ## Usage
-
 Basic commands through Claude:
 - "Show all my todos"
 - "What's on my list for today?"
 - "Add a todo for today: check emails"
 - "Add a task for later: review project"
 
-## Limitations
+New memory-related commands:
+- "Show me the memory graph"
+- "What's the history of task [task_id]"
+- "Show all related tasks for [task_id]"
 
+## Memory Graph Features
+The memory graph system provides:
+- Complete task history tracking
+- Relationship management between tasks
+- Observation storage for task lifecycle events
+- JSON serialization for persistence
+
+## Limitations
+Original limitations plus:
 - Only works with a specific Notion database structure
 - No support for complex database schemas
 - Limited to "today" or "later" task scheduling
 - No support for additional properties or custom fields
 - Basic error handling
 - No advanced features like recurring tasks, priorities, or tags
+- Memory graph is session-based (resets on server restart)
 
 ## Customization
-
 If you want to use this with a different database structure, you'll need to modify the `server.py` file, particularly:
 - The `create_todo()` function to match your database properties
 - The todo formatting in `call_tool()` to handle your data structure
 - The input schema in `list_tools()` if you want different options
+- The `MemoryGraph` class if you want to extend memory capabilities
 
 ## Project Structure
 ```
@@ -125,14 +143,14 @@ notion_mcp/
     └── notion_mcp/
         ├── __init__.py
         ├── __main__.py
-        └── server.py      # Main implementation
+        └── server.py      # Main implementation with memory graph
 ```
 
 ## License
-
 MIT License - Use at your own risk
 
 ## Acknowledgments
-
+- Originally built by [danhilse](https://github.com/danhilse/notion_mcp)
 - Built to work with Claude Desktop
 - Uses Notion's API
+- Memory graph implementation added by [DMontgomery40](https://github.com/DMontgomery40)
