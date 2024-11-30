@@ -13,6 +13,8 @@ This is a personal project designed for a very specific use case: my simple Noti
 - When (select with only two options: "today" or "later")
 - Checkbox (marks if completed)
 
+[Example Notion Database](https://danhilse.notion.site/14e5549555a08078afb5ed5d374bb656?v=14e5549555a081f9b5a4000cdf952cb9&pvs=4)
+
 While you can use this as a starting point for your own Notion integration, you'll likely need to modify the code to match your specific database structure and requirements.
 
 ## Features
