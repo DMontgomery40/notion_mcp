@@ -10,14 +10,79 @@ import os
 import json
 from datetime import datetime
 import httpx
-from typing import Any, Sequence
+from typing import Any, Sequence, Dict, List, Optional
 from dotenv import load_dotenv
 from pathlib import Path
 import logging
+import asyncio
 
 # Set up logging
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger('notion_mcp')
+
+class MemoryGraph:
+    """Memory management using a simple knowledge graph."""
+    def __init__(self):
+        self.entities: Dict[str, dict] = {}
+        self.relations: List[dict] = []
+    
+    def add_entity(self, name: str, entity_type: str, observations: Optional[List[str]] = None) -> None:
+        if observations is None:
+            observations = []
+        self.entities[name] = {
+            "type": entity_type,
+            "observations": observations
+        }
+    
+    def add_relation(self, from_entity: str, relation_type: str, to_entity: str) -> None:
+        if from_entity not in self.entities or to_entity not in self.entities:
+            raise ValueError("Both entities must exist in the graph")
+        
+        self.relations.append({
+            "from": from_entity,
+            "type": relation_type,
+            "to": to_entity
+        })
+    
+    def add_observation(self, entity_name: str, observation: str) -> None:
+        if entity_name not in self.entities:
+            raise ValueError(f"Entity {entity_name} not found")
+        
+        self.entities[entity_name]["observations"].append(observation)
+    
+    def get_entity(self, name: str) -> Optional[dict]:
+        return self.entities.get(name)
+    
+    def get_related_entities(self, entity_name: str) -> List[dict]:
+        related = []
+        for relation in self.relations:
+            if relation["from"] == entity_name:
+                related.append({
+                    "entity": self.entities[relation["to"]],
+                    "relation": relation["type"],
+                    "direction": "outgoing"
+                })
+            elif relation["to"] == entity_name:
+                related.append({
+                    "entity": self.entities[relation["from"]],
+                    "relation": relation["type"],
+                    "direction": "incoming"
+                })
+        return related
+
+    def to_json(self) -> str:
+        return json.dumps({
+            "entities": self.entities,
+            "relations": self.relations
+        })
+    
+    @classmethod
+    def from_json(cls, json_str: str) -> 'MemoryGraph':
+        data = json.loads(json_str)
+        graph = cls()
+        graph.entities = data["entities"]
+        graph.relations = data["relations"]
+        return graph
 
 # Find and load .env file from project root
 project_root = Path(__file__).parent.parent.parent
@@ -26,8 +91,9 @@ if not env_path.exists():
     raise FileNotFoundError(f"No .env file found at {env_path}")
 load_dotenv(env_path)
 
-# Initialize server
+# Initialize server and memory
 server = Server("notion-todo")
+memory_graph = MemoryGraph()
 
 # Configuration with validation
 NOTION_API_KEY = os.getenv("NOTION_API_KEY")
@@ -67,8 +133,9 @@ async def fetch_todos() -> dict:
         return response.json()
 
 async def create_todo(task: str, when: str) -> dict:
-    """Create a new todo in Notion"""
+    """Create a new todo in Notion and add to memory graph"""
     async with httpx.AsyncClient() as client:
+        # Create todo in Notion
         response = await client.post(
             f"{NOTION_BASE_URL}/pages",
             headers=headers,
@@ -91,11 +158,17 @@ async def create_todo(task: str, when: str) -> dict:
             }
         )
         response.raise_for_status()
-        return response.json()
+        result = response.json()
+        
+        # Add to memory graph
+        task_id = result["id"]
+        memory_graph.add_entity(task_id, "todo", [f"Task: {task}", f"When: {when}", "Status: pending"])
+        return result
 
 async def complete_todo(page_id: str) -> dict:
-    """Mark a todo as complete in Notion"""
+    """Mark a todo as complete in both Notion and memory graph"""
     async with httpx.AsyncClient() as client:
+        # Update in Notion
         response = await client.patch(
             f"{NOTION_BASE_URL}/pages/{page_id}",
             headers=headers,
@@ -109,11 +182,17 @@ async def complete_todo(page_id: str) -> dict:
             }
         )
         response.raise_for_status()
-        return response.json()
+        result = response.json()
+        
+        # Update in memory graph
+        if memory_graph.get_entity(page_id):
+            memory_graph.add_observation(page_id, "Status: completed")
+        
+        return result
 
 @server.list_tools()
 async def list_tools() -> list[Tool]:
-    """List available todo tools"""
+    """List available tools"""
     return [
         Tool(
             name="add_todo",
@@ -165,6 +244,29 @@ async def list_tools() -> list[Tool]:
                 },
                 "required": ["task_id"]
             }
+        ),
+        Tool(
+            name="show_memory",
+            description="Show the current state of the memory graph",
+            inputSchema={
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        ),
+        Tool(
+            name="get_task_history",
+            description="Get the complete history of a task from memory",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "task_id": {
+                        "type": "string",
+                        "description": "The ID of the task to get history for"
+                    }
+                },
+                "required": ["task_id"]
+            }
         )
     ]
 
@@ -188,7 +290,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent | Embedde
             return [
                 TextContent(
                     type="text",
-                    text=f"Added todo: {task} (scheduled for {when})"
+                    text=f"Added todo: {task} (scheduled for {when})\nTask ID: {result['id']}"
                 )
             ]
         except httpx.HTTPError as e:
@@ -196,7 +298,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent | Embedde
             return [
                 TextContent(
                     type="text",
-                    text=f"Error adding todo: {str(e)}\nPlease make sure your Notion integration is properly set up and has access to the database."
+                    text=f"Error adding todo: {str(e)}\nPlease make sure your Notion integration is properly set up."
                 )
             ]
             
@@ -207,7 +309,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent | Embedde
             for todo in todos.get("results", []):
                 props = todo["properties"]
                 formatted_todo = {
-                    "id": todo["id"],  # Include the page ID in the response
+                    "id": todo["id"],
                     "task": props["Task"]["title"][0]["text"]["content"] if props["Task"]["title"] else "",
                     "completed": props["Checkbox"]["checkbox"],
                     "when": props["When"]["select"]["name"] if props["When"]["select"] else "unknown",
@@ -230,7 +332,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent | Embedde
             return [
                 TextContent(
                     type="text",
-                    text=f"Error fetching todos: {str(e)}\nPlease make sure your Notion integration is properly set up and has access to the database."
+                    text=f"Error fetching todos: {str(e)}"
                 )
             ]
     
@@ -255,9 +357,42 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent | Embedde
             return [
                 TextContent(
                     type="text",
-                    text=f"Error completing todo: {str(e)}\nPlease make sure your Notion integration is properly set up and has access to the database."
+                    text=f"Error completing todo: {str(e)}"
                 )
             ]
+    
+    elif name == "show_memory":
+        return [
+            TextContent(
+                type="text",
+                text=memory_graph.to_json()
+            )
+        ]
+    
+    elif name == "get_task_history":
+        task_id = arguments.get("task_id")
+        if not task_id:
+            raise ValueError("Task ID is required")
+        
+        entity = memory_graph.get_entity(task_id)
+        if not entity:
+            return [
+                TextContent(
+                    type="text",
+                    text=f"No history found for task {task_id}"
+                )
+            ]
+        
+        return [
+            TextContent(
+                type="text",
+                text=json.dumps({
+                    "task_id": task_id,
+                    "history": entity["observations"],
+                    "related": memory_graph.get_related_entities(task_id)
+                }, indent=2)
+            )
+        ]
     
     raise ValueError(f"Unknown tool: {name}")
 
@@ -276,5 +411,4 @@ async def main():
         )
 
 if __name__ == "__main__":
-    import asyncio
     asyncio.run(main())
