@@ -1,6 +1,8 @@
-# Personal Notion MCP Integration
+# Notion MCP Integration
 
 A simple Model Context Protocol (MCP) server that integrates with Notion's API to manage my personal todo list through Claude. This is a basic implementation tailored specifically for my minimalist todo list setup in Notion.
+
+![Demo](assets/demo.gif)
 
 ## Important Note
 
