@@ -34,7 +34,7 @@ While you can use this as a starting point for your own Notion integration, you'
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/yourusername/notion-mcp.git
+git clone https://github.com/DMontgomery40/notion-mcp.git
 cd notion-mcp
 ```
 
